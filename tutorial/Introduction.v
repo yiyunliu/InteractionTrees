@@ -8,6 +8,10 @@
  *)
 
 (* begin hide *)
+Require Import ssreflect.
+
+From Hammer Require Import Tactics Hammer.
+
 From Coq Require Import
      Arith
      Lia
@@ -41,6 +45,9 @@ Open Scope monad_scope.
     tree expects as a response to the event.
  *)
 
+
+(** Similar to v from Paul's notes? *)
+(** ioE A; A is the expected type from the continuation  *)
 Inductive ioE : Type -> Type :=
 | Input : ioE (list nat)
   (** Ask for a list of [nat] from the environment. *)
@@ -83,14 +90,22 @@ Definition handle_io
 
 (** [interp] lifts any handler into an _interpreter_, of type
     [forall R, itree ioE R -> M R]. *)
+Check @interp.
+Check handle_io.
+(** void kills the VisF case *)
+  (* Goal exists n, Monads.stateT (list nat) (itree void1) nat = itree void1 n. *)
+
+
 Definition interp_io
   : forall R, itree ioE R -> itree void1 (list nat * R)
   := fun R t => Monads.run_stateT (interp handle_io t) [].
+
 
 (** We can now interpret [write_one]. *)
 Definition interpreted_write_one : itree void1 (list nat * unit)
   := interp_io _ write_one.
 
+Print write_one.
 (** Intuitively, [interp_io] replaces every [ITree.trigger] in the
     definition of [write_one] with [handle_io]:
 [[
@@ -116,8 +131,10 @@ Lemma interp_write_one F (handle_io : forall R, ioE R -> itree F R)
      handle_io _ (Output (xs ++ [1]))).
 Proof.
   unfold write_one.
-  (* Use lemmas from [ITree.Simple] ([theories/Simple.v]). *)
-  (* FILL IN HERE *) Admitted.
+  setoid_rewrite interp_bind.
+  setoid_rewrite interp_trigger.
+  reflexivity.
+Qed.
 
 (** An [itree void1] is a computation which can either return a value,
     or loop infinitely. Since Coq is total, [interpreted_write_one]
@@ -224,7 +241,18 @@ Lemma unfold_factorial : forall x,
 Proof.
   intros x.
   unfold factorial.
-  (* FILL IN HERE *) Admitted.
+  destruct x.
+  - rewrite rec_as_interp.
+    simpl.
+    rewrite interp_ret.
+    reflexivity.
+  - rewrite rec_as_interp.
+    simpl.
+    rewrite interp_bind.
+    setoid_rewrite interp_ret.
+    setoid_rewrite interp_recursive_call.
+    reflexivity.
+Qed.
 
 (** We can prove that the ITrees version [factorial] is "equivalent"
     to the [factorial_spec] version.  The proof goes by induction on
@@ -239,8 +267,24 @@ Proof.
 Lemma factorial_correct : forall n,
     factorial n ≈ Ret (factorial_spec n).
 Proof.
-  intros n.
-  (* FILL IN HERE *) Admitted.
+  induction n.
+  - unfold factorial.
+    rewrite rec_as_interp.
+    simpl.
+    rewrite interp_ret.
+    reflexivity.
+  - unfold factorial.
+    simpl.
+    rewrite rec_as_interp.
+    simpl.
+    rewrite interp_bind.
+    setoid_rewrite interp_ret.
+    unfold factorial in IHn.
+    setoid_rewrite interp_recursive_call.
+    rewrite IHn.
+    setoid_rewrite bind_ret.
+    reflexivity.
+Qed.
 
 (** ** Fibonacci *)
 
@@ -258,8 +302,19 @@ Fixpoint fib_spec (n : nat) : nat :=
     end
   end.
 
-Definition fib_body : nat -> itree (callE nat nat +' E) nat
-  (* REPLACE THIS LINE WITH ":= _your_definition_ ." *). Admitted.
+Definition fib_body (n : nat) : itree (callE nat nat +' E) nat
+  := match n with
+     | 0 => Ret 0
+     | S n' =>
+         match n' with
+         | 0 => Ret 1
+         | S n'' =>
+             r0 <- call n'';;
+             r1 <- call n';;
+             Ret (r0 + r1)
+         end
+     end.
+(* REPLACE THIS LINE WITH ":= _your_definition_ ." *)
 
 Definition fib n : itree E nat :=
   rec fib_body n.
@@ -289,11 +344,32 @@ Proof.
   induction n as [ | n' IH ]; intros.
   - (* n = 0 *)
     apply Nat.le_0_r in H. subst m.
-    (* FILL IN HERE *) admit.
+    rewrite rec_as_interp.
+    simpl.
+    rewrite interp_ret.
+    reflexivity.
   - (* n = S n' *)
     apply Nat.le_succ_r in H.
-    (* FILL IN HERE *) admit.
-(* FILL IN HERE *) Admitted.
+    destruct H.
+    + apply : IH => //.
+    + rewrite H.
+      rewrite rec_as_interp.
+      simpl.
+      destruct n'.
+      rewrite interp_ret.
+      reflexivity.
+      rewrite interp_bind.
+      setoid_rewrite interp_bind.
+      setoid_rewrite interp_recursive_call.
+      setoid_rewrite interp_ret.
+      have eq : rec fib_body (S n') ≈ Ret (fib_spec (S n')) by auto.
+      have eq2 : rec fib_body n' ≈ Ret (fib_spec n') by auto.
+      setoid_rewrite eq.
+      setoid_rewrite eq2.
+      repeat setoid_rewrite bind_ret.
+      reflexivity.
+Qed.
+
 
 (** ** Logarithm *)
 
@@ -306,8 +382,8 @@ Proof.
     (Note that this only constrains a very small subset of inputs,
     and in fact our solution diverges for some of them.)
  *)
-Definition log (b : nat) : nat -> itree E nat
-  (* REPLACE THIS LINE WITH ":= _your_definition_ ." *). Admitted.
+Definition log (b : nat) : nat -> itree E nat.
+Admitted.
 
 Example log_2_64 : log 2 (2 ^ 6) ≈ Ret 6.
 Proof.
@@ -329,7 +405,7 @@ Lemma log_correct_helper2 :
   forall b y, 1 < b ->
               (b * b ^ y / b) = (b ^ y).
 Proof.
-  intros; rewrite Nat.mul_comm, Nat.div_mul; lia.
+  intros; rewrite Nat.mul_comm Nat.div_mul; lia.
 Qed.
 
 Lemma log_correct : forall b y, 1 < b -> log b (b ^ y) ≈ Ret y.
